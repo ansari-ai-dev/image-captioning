@@ -33,3 +33,14 @@ PAD_TOKEN, START_TOKEN, END_TOKEN, UNK_TOKEN = "<PAD>", "<START>", "<END>", "<UN
 # --- Training (used starting Phase 4) ---
 BATCH_SIZE = 32
 DEVICE = "cuda"  # set at runtime via torch.cuda.is_available() check in train.py
+
+# --- Model hyperparameters (LSTM baseline) ---
+EMBED_DIM = 256
+DECODER_DIM = 512
+ATTENTION_DIM = 256
+ENCODER_DIM = 2048  # ResNet50's output channel count
+
+# --- Training hyperparameters ---
+LEARNING_RATE = 4e-4
+NUM_EPOCHS = 15
+GRAD_CLIP = 5.0
