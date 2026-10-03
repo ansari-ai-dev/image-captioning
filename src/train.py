@@ -1,3 +1,5 @@
+from pathlib import Path
+from tqdm import tqdm
 import time
 import torch
 import torch.nn as nn
@@ -7,7 +9,7 @@ import matplotlib.pyplot as plt
 from config import (
     TRAIN_CSV, VAL_CSV, BATCH_SIZE, CHECKPOINT_DIR, SEED,
     EMBED_DIM, DECODER_DIM, ATTENTION_DIM, ENCODER_DIM,
-    LEARNING_RATE, NUM_EPOCHS, GRAD_CLIP
+    LEARNING_RATE, NUM_EPOCHS, GRAD_CLIP, EARLY_STOP_PATIENCE
 )
 from vocabulary import Vocabulary
 from transforms import train_transform, eval_transform
@@ -15,7 +17,7 @@ from dataset import FlickrDataset, collate_fn
 from models.encoder import EncoderCNN
 from models.lstm_decoder import DecoderLSTM
 
-SANITY_CHECK = True  # flip to False only when running the real training on Colab
+SANITY_CHECK = False
 
 torch.manual_seed(SEED)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -43,7 +45,7 @@ def run_epoch(loader, training, max_batches=None):
     decoder.train(training)
     total_loss, n_batches = 0.0, 0
 
-    for i, (images, captions, lengths) in enumerate(loader):
+    for i, (images, captions, lengths) in enumerate(tqdm(loader, desc="train" if training else "val")):
         if max_batches and i >= max_batches:
             break
         images, captions = images.to(device), captions.to(device)
@@ -77,9 +79,12 @@ if __name__ == "__main__":
         print("\nIf these losses are finite (not NaN/inf) and roughly stable or "
               "decreasing, the pipeline is wired correctly.")
     else:
-        print(f"\n=== FULL TRAINING ({NUM_EPOCHS} epochs) ===")
+        print(f"\n=== FULL TRAINING ({NUM_EPOCHS} epochs, early stop patience={EARLY_STOP_PATIENCE}) ===")
         CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+        Path("results/figures").mkdir(parents=True, exist_ok=True)  # FIX: ensure folder exists before saving
+
         best_val_loss = float("inf")
+        epochs_without_improvement = 0
         train_losses, val_losses = [], []
 
         for epoch in range(NUM_EPOCHS):
@@ -95,6 +100,7 @@ if __name__ == "__main__":
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
+                epochs_without_improvement = 0
                 torch.save({
                     "encoder_state": encoder.state_dict(),
                     "decoder_state": decoder.state_dict(),
@@ -102,13 +108,20 @@ if __name__ == "__main__":
                     "val_loss": val_loss,
                 }, CHECKPOINT_DIR / "lstm_best.pth")
                 print(f"  -> best so far, checkpoint saved (val_loss={val_loss:.4f})")
+            else:
+                epochs_without_improvement += 1
+                print(f"  -> no improvement ({epochs_without_improvement}/{EARLY_STOP_PATIENCE})")
+                if epochs_without_improvement >= EARLY_STOP_PATIENCE:
+                    print(f"\nEarly stopping triggered at epoch {epoch+1} "
+                          f"(no val improvement for {EARLY_STOP_PATIENCE} epochs).")
+                    break
 
         plt.figure(figsize=(8, 5))
-        plt.plot(train_losses, label="Train Loss")
-        plt.plot(val_losses, label="Val Loss")
+        plt.plot(range(1, len(train_losses)+1), train_losses, label="Train Loss", marker='o')
+        plt.plot(range(1, len(val_losses)+1), val_losses, label="Val Loss", marker='o')
         plt.xlabel("Epoch")
         plt.ylabel("Cross-Entropy Loss")
         plt.title("LSTM + Attention: Training vs Validation Loss")
         plt.legend()
-        plt.savefig("results/figures/lstm_loss_curve.png")
+        plt.savefig("results/figures/lstm_loss_curve.png", dpi=150, bbox_inches='tight')
         print("\nLoss curve saved to results/figures/lstm_loss_curve.png")
