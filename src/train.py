@@ -1,5 +1,6 @@
 from pathlib import Path
 from tqdm import tqdm
+import argparse
 import time
 import torch
 import torch.nn as nn
@@ -9,19 +10,26 @@ import matplotlib.pyplot as plt
 from config import (
     TRAIN_CSV, VAL_CSV, BATCH_SIZE, CHECKPOINT_DIR, SEED,
     EMBED_DIM, DECODER_DIM, ATTENTION_DIM, ENCODER_DIM,
-    LEARNING_RATE, NUM_EPOCHS, GRAD_CLIP, EARLY_STOP_PATIENCE
+    LEARNING_RATE, NUM_EPOCHS, GRAD_CLIP, EARLY_STOP_PATIENCE,
+    FIGURES_DIR, METRICS_DIR, EXPERIMENTS_CSV, WEIGHT_DECAY
 )
 from vocabulary import Vocabulary
 from transforms import train_transform, eval_transform
 from dataset import FlickrDataset, collate_fn
 from models.encoder import EncoderCNN
 from models.lstm_decoder import DecoderLSTM
+from experiment_utils import count_parameters, log_experiment
 
-SANITY_CHECK = False
+parser = argparse.ArgumentParser()
+parser.add_argument("--weight_decay", type=float, default=WEIGHT_DECAY)
+parser.add_argument("--experiment_name", type=str, default="lstm_baseline")
+parser.add_argument("--sanity_check", action="store_true")
+args = parser.parse_args()
 
 torch.manual_seed(SEED)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
+print(f"Experiment: {args.experiment_name} | weight_decay={args.weight_decay}")
 
 vocab = Vocabulary()
 vocab.load()
@@ -36,12 +44,12 @@ val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, colla
 encoder = EncoderCNN(fine_tune=False).to(device)
 decoder = DecoderLSTM(vocab_size, EMBED_DIM, DECODER_DIM, ATTENTION_DIM, ENCODER_DIM).to(device)
 
-criterion = nn.CrossEntropyLoss(ignore_index=0)  # index 0 = <PAD>, excluded from loss
-optimizer = torch.optim.Adam(decoder.parameters(), lr=LEARNING_RATE)  # encoder is frozen
+criterion = nn.CrossEntropyLoss(ignore_index=0)
+optimizer = torch.optim.Adam(decoder.parameters(), lr=LEARNING_RATE, weight_decay=args.weight_decay)
 
 
 def run_epoch(loader, training, max_batches=None):
-    encoder.eval()          # frozen encoder: always eval mode (fixes BatchNorm stats)
+    encoder.eval()
     decoder.train(training)
     total_loss, n_batches = 0.0, 0
 
@@ -53,8 +61,7 @@ def run_epoch(loader, training, max_batches=None):
         with torch.set_grad_enabled(training):
             encoder_out = encoder(images)
             outputs, alphas = decoder(encoder_out, captions)
-            targets = captions[:, 1:]  # skip <START>, predict the rest
-
+            targets = captions[:, 1:]
             loss = criterion(outputs.reshape(-1, vocab_size), targets.reshape(-1))
 
             if training:
@@ -70,28 +77,31 @@ def run_epoch(loader, training, max_batches=None):
 
 
 if __name__ == "__main__":
-    if SANITY_CHECK:
+    if args.sanity_check:
         print("\n=== SANITY CHECK (3 batches, 2 epochs) ===")
         for epoch in range(2):
             tr_loss = run_epoch(train_loader, training=True, max_batches=3)
             val_loss = run_epoch(val_loader, training=False, max_batches=3)
             print(f"Epoch {epoch+1}: train_loss={tr_loss:.4f}  val_loss={val_loss:.4f}")
-        print("\nIf these losses are finite (not NaN/inf) and roughly stable or "
-              "decreasing, the pipeline is wired correctly.")
+        print("\nSanity check complete.")
     else:
-        print(f"\n=== FULL TRAINING ({NUM_EPOCHS} epochs, early stop patience={EARLY_STOP_PATIENCE}) ===")
+        print(f"\n=== FULL TRAINING: {args.experiment_name} "
+              f"({NUM_EPOCHS} epochs, early stop patience={EARLY_STOP_PATIENCE}) ===")
         CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-        Path("results/figures").mkdir(parents=True, exist_ok=True)  # FIX: ensure folder exists before saving
+        FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 
         best_val_loss = float("inf")
+        best_epoch = 0
         epochs_without_improvement = 0
         train_losses, val_losses = [], []
+        total_train_time = 0.0
 
         for epoch in range(NUM_EPOCHS):
             start = time.time()
             tr_loss = run_epoch(train_loader, training=True)
             val_loss = run_epoch(val_loader, training=False)
             elapsed = time.time() - start
+            total_train_time += elapsed
             train_losses.append(tr_loss)
             val_losses.append(val_loss)
 
@@ -100,28 +110,47 @@ if __name__ == "__main__":
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
+                best_epoch = epoch + 1
                 epochs_without_improvement = 0
                 torch.save({
                     "encoder_state": encoder.state_dict(),
                     "decoder_state": decoder.state_dict(),
                     "epoch": epoch,
                     "val_loss": val_loss,
-                }, CHECKPOINT_DIR / "lstm_best.pth")
+                }, CHECKPOINT_DIR / f"{args.experiment_name}_best.pth")
                 print(f"  -> best so far, checkpoint saved (val_loss={val_loss:.4f})")
             else:
                 epochs_without_improvement += 1
                 print(f"  -> no improvement ({epochs_without_improvement}/{EARLY_STOP_PATIENCE})")
                 if epochs_without_improvement >= EARLY_STOP_PATIENCE:
-                    print(f"\nEarly stopping triggered at epoch {epoch+1} "
-                          f"(no val improvement for {EARLY_STOP_PATIENCE} epochs).")
+                    print(f"\nEarly stopping triggered at epoch {epoch+1}.")
                     break
 
+        # Plot -- saved to FIGURES_DIR, which is Drive-backed on Colab (survives disconnects)
         plt.figure(figsize=(8, 5))
         plt.plot(range(1, len(train_losses)+1), train_losses, label="Train Loss", marker='o')
         plt.plot(range(1, len(val_losses)+1), val_losses, label="Val Loss", marker='o')
+        plt.axvline(x=best_epoch, color='gray', linestyle='--', alpha=0.5, label=f"Best checkpoint (epoch {best_epoch})")
         plt.xlabel("Epoch")
         plt.ylabel("Cross-Entropy Loss")
-        plt.title("LSTM + Attention: Training vs Validation Loss")
+        plt.title(f"LSTM + Attention [{args.experiment_name}]: Training vs Validation Loss")
         plt.legend()
-        plt.savefig("results/figures/lstm_loss_curve.png", dpi=150, bbox_inches='tight')
-        print("\nLoss curve saved to results/figures/lstm_loss_curve.png")
+        fig_path = FIGURES_DIR / f"{args.experiment_name}_loss_curve.png"
+        plt.savefig(fig_path, dpi=150, bbox_inches='tight')
+        print(f"\nLoss curve saved to {fig_path}")
+
+        # Log this experiment
+        enc_total, enc_trainable = count_parameters(encoder)
+        dec_total, dec_trainable = count_parameters(decoder)
+        log_experiment(EXPERIMENTS_CSV, {
+            "experiment_id": args.experiment_name,
+            "model": "LSTM+Attention",
+            "seed": SEED, "hardware": "Colab T4" if torch.cuda.is_available() else "CPU",
+            "epochs_run": len(train_losses), "best_epoch": best_epoch,
+            "batch_size": BATCH_SIZE, "learning_rate": LEARNING_RATE, "optimizer": "Adam",
+            "weight_decay": args.weight_decay, "dropout": 0.5, "encoder_frozen": True,
+            "total_params": enc_total + dec_total, "trainable_params": enc_trainable + dec_trainable,
+            "best_val_loss": round(best_val_loss, 4),
+            "training_time_min": round(total_train_time / 60, 1),
+            "notes": f"weight_decay={args.weight_decay} regularization experiment",
+        })

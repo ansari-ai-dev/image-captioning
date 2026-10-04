@@ -55,3 +55,13 @@ TRANSFORMER_DROPOUT = 0.1
 
 # --- Transformer training ---
 TRANSFORMER_LR = 3e-4
+
+# --- Phase 6: experiment tracking & results storage ---
+# Auto-detects Colab vs local, same pattern as CHECKPOINT_DIR -- prevents
+# losing figures/metrics to a mid-session disconnect like in Phase 4 & 5.
+RESULTS_DIR = Path("/content/drive/MyDrive/image-captioning-results") if Path("/content").exists() else PROJECT_ROOT / "results"
+FIGURES_DIR = RESULTS_DIR / "figures"
+METRICS_DIR = RESULTS_DIR / "metrics"
+EXPERIMENTS_CSV = METRICS_DIR / "experiments.csv"
+
+WEIGHT_DECAY = 0.0  # baseline default; overridden per-experiment via --weight_decay
