@@ -45,3 +45,13 @@ LEARNING_RATE = 4e-4
 NUM_EPOCHS = 15
 GRAD_CLIP = 5.0
 EARLY_STOP_PATIENCE = 3
+
+# --- Model hyperparameters (Transformer) ---
+D_MODEL = 512           # Transformer's internal dimension (analogous to DECODER_DIM)
+NHEAD = 8                # number of attention heads
+NUM_DECODER_LAYERS = 4
+DIM_FEEDFORWARD = 2048
+TRANSFORMER_DROPOUT = 0.1
+
+# --- Transformer training ---
+TRANSFORMER_LR = 3e-4
