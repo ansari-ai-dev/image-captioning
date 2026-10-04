@@ -9,7 +9,7 @@ TRAIN_CSV = PROCESSED_DIR / "train.csv"
 VAL_CSV = PROCESSED_DIR / "val.csv"
 TEST_CSV = PROCESSED_DIR / "test.csv"
 VOCAB_PATH = PROJECT_ROOT / "data" / "vocab.json"
-CHECKPOINT_DIR = PROJECT_ROOT / "checkpoints"
+CHECKPOINT_DIR = Path("/content/drive/MyDrive/image-captioning-checkpoints") if Path("/content").exists() else PROJECT_ROOT / "checkpoints"
 
 # --- Reproducibility ---
 SEED = 42
