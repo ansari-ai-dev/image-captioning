@@ -17,7 +17,7 @@ from dataset import FlickrDataset, collate_fn
 from models.encoder import EncoderCNN
 from models.transformer_decoder import DecoderTransformer
 
-SANITY_CHECK = True  # flip to False only for the real Colab run
+SANITY_CHECK = False
 
 torch.manual_seed(SEED)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
