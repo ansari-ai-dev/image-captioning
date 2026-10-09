@@ -59,10 +59,10 @@ class Vocabulary:
         words = []
         for i in ids:
             w = self.idx2word.get(i, UNK_TOKEN)
-            if skip_special and w in (PAD_TOKEN, START_TOKEN, END_TOKEN):
-                continue
             if skip_special and w == END_TOKEN:
                 break
+            if skip_special and w in (PAD_TOKEN, START_TOKEN, END_TOKEN):
+                continue
             words.append(w)
         return " ".join(words)
 
@@ -77,7 +77,6 @@ class Vocabulary:
     def load(self, path=VOCAB_PATH):
         with open(path, "r", encoding="utf-8") as f:
             self.word2idx = json.load(f)
-        self.idx2word = {int(i): w for w, i in self.word2idx.items()}
         # fix: json keys load as str, idx2word needs int keys from values
         self.idx2word = {v: k for k, v in self.word2idx.items()}
 
